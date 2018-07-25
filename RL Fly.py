@@ -8,23 +8,14 @@ import time
 from tqdm import tqdm
 import math
 #inputs = velocity vector (3x1) + rotaion vector(3x1)
-def variable_summaries(var):
-  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
-  with tf.name_scope('summaries'):
-    mean = tf.reduce_mean(var)
-    tf.summary.scalar('mean', mean)
-    with tf.name_scope('stddev'):
-      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-    tf.summary.scalar('stddev', stddev)
-    tf.summary.scalar('max', tf.reduce_max(var))
-    tf.summary.scalar('min', tf.reduce_min(var))
-    tf.summary.histogram('histogram', var)
 
 def evaluate_score(vel,rot, lastVelM,lastRotM):
     velM = (vel[0] * vel[0]) + (vel[1] * vel[1]) + (vel[2] * vel[2])
     velM = math.sqrt(velM)
     rotM = (rot[0] * rot[0]) + (rot[1] * rot[1]) + (rot[2] * rot[2])
     rotM = math.sqrt(rotM)
+    if rot[0] > 180 or rot[2] > 180 or rot[0] < -180 or rot[2] < -180:
+        return velM,rotM,-1.0
     if velM < lastVelM or rotM < lastRotM:
         return velM,rotM,1.0
     else:
@@ -43,9 +34,9 @@ class RLnetwork():
         self.sess = tf.Session()
         self.step = 0
         if output_graph:
-            merged = tf.summary.merge_all()
-            self.grapher = tf.summary.FileWriter("logs/",self.sess.graph)
-            self.writer = tf.summary.FileWriter("logs/")
+            self.merged = tf.summary.merge_all()
+            self.grapher = tf.summary.FileWriter("logs/" + str(VERSION) + "/",self.sess.graph)
+            self.writer = tf.summary.FileWriter("logs/" +str(VERSION) + "/")
         self.sess.run(tf.global_variables_initializer())
     def _build_net(self):
         with tf.name_scope("inputs"):
@@ -83,10 +74,10 @@ class RLnetwork():
 
         with tf.name_scope("loss"):#define the loss function
             neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=all_act,labels=self.tf_acts)#Question
-            loss = tf.reduce_mean(neg_log_prob * self.tf_vt)
-            tf.summary.scalar("loss" + str(VERSION),loss)
+            self.loss = tf.reduce_mean(neg_log_prob * self.tf_vt)
+            tf.summary.scalar("loss" + str(VERSION),self.loss)
         with tf.name_scope("train"):
-            self.train_op = tf.train.AdamOptimizer(self.lr).minimize(loss)
+            self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
     def choose_action(self,observation):
         observation = np.array(observation)
@@ -104,15 +95,25 @@ class RLnetwork():
     def learn(self):#train the model
         discounted_ep_rs_norm = self._discount_and_norm_rewards()
 
-        self.sess.run(self.train_op, feed_dict = {#using the adam optimizer train feed this tample with these targets
+        _ ,loss = self.sess.run([self.train_op,self.loss], feed_dict = {#using the adam optimizer train feed this tample with these targets
             self.tf_obs:np.vstack(self.ep_obs),#feed each state
             self.tf_acts: np.array(self.ep_as),#feed each action
             self.tf_vt: discounted_ep_rs_norm
             })
         self.step += 1
-        summary = tf.Summary()
-        summary.value.add(tag="score" + str(VERSION),simple_value = sum(self.ep_rs))
+        summary  = tf.Summary()
+        summary.value.add(tag="cookies" + str(VERSION),simple_value = sum(self.ep_rs))
         self.writer.add_summary(summary,self.step)
+        if self.step % 1 ==0:
+            ret = self.sess.run(self.merged, feed_dict = {#using the adam optimizer train feed this tample with these targets
+            self.tf_obs:np.vstack(self.ep_obs),#feed each state
+            self.tf_acts: np.array(self.ep_as),#feed each action
+            self.tf_vt: discounted_ep_rs_norm
+            })
+            #s = tf.Summary()
+           # s.value.add(tag = "Grad" + str(VERSION),simple_value = discounted_ep_rs_norm)
+          #  self.writer.add_summary(s,self.step)
+            self.writer.add_summary(ret,self.step)
         self.ep_obs,self.ep_as,self.ep_rs = [],[],[] #clears it out for the next episode
         return discounted_ep_rs_norm
 
@@ -125,14 +126,15 @@ class RLnetwork():
         discounted_ep_rs -= np.mean(discounted_ep_rs)#Question how does this normalize?
         std = np.std(discounted_ep_rs)
         if std != 0:
-            discounted_ep_rs /= np.std(discounted_ep_rs)
+            discounted_ep_rs /= std
         return discounted_ep_rs
 
-VERSION = 1
+VERSION = len(os.listdir("./logs"))
+os.mkdir(os.path.join("./logs",str(VERSION)))
 network = RLnetwork(6,16,0.01,0.95,True)#make network with 6 inputs (x,y,z of vel and rotation), 16 target outputs (basically change the different motors)
 #os.system('"Unity QuadCopter.exe"')
 
-p = subprocess.Popen(os.path.join(os.getcwd(),"Unity QuadCopter.exe"))
+p = subprocess.Popen(os.path.join(os.getcwd(),"builds.exe"))
 time.sleep(5)
 env = control.Drone_Control(25000,0.1)
 NUM_EPISODES = 1000
@@ -153,6 +155,9 @@ for x in tqdm(range(NUM_EPISODES)):
         lastVelM = velM
         network.store_transition(observation,action,reward)
         observation = next_ob
+        if rot[0] > 180 or rot[2] > 180 or rot[0] < -180 or rot[2] < -180:
+            env.crashed = True
+
      #when the episdoe completes your last action didnt work
     vt = network.learn()#when you crash learn from your mistakes
     env.crashed = False
