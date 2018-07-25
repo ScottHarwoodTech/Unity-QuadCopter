@@ -53,22 +53,31 @@ class RLnetwork():
             self.tf_acts = tf.placeholder(tf.int32,[None, ], name = "actions_num")
             self.tf_vt = tf.placeholder(tf.float32,[None, ], name = "actions_value")#Question wtf does this do
         #the first fully connected layer
-        layer = tf.layers.dense(
+        layer1 = tf.layers.dense(
                 inputs = self.tf_obs,
-                units = 10,#ten hidden neurons on this layer
-                activation = tf.nn.tanh, #using the tanh activation
+                units = 256,#256 hidden neurons on this layer
+                activation = tf.nn.relu, #using the relu activation
                 kernel_initializer = tf.random_normal_initializer(mean = 0,stddev=0.3),
                 bias_initializer = tf.constant_initializer(0.1),
                 name="fc1"
                 )
-        #the second fully connected layer
+        # 2nd hidden layer
+        layer2 = tf.layers.dense(
+                inputs = layer1,
+                units = 256, # 256 hidden neurons on this layer
+                activation = tf.nn.relu, #using the relu activation
+                kernel_initializer = tf.random_normal_initializer(mean = 0,stddev=0.3),
+                bias_initializer = tf.constant_initializer(0.1),
+                name="fc2"
+                )
+        #output layer
         all_act = tf.layers.dense(
-                inputs= layer,
+                inputs= layer2,
                 units = self.n_actions,#so it knows how many possible outputs it can have
-                activation=None,
+                activation=tf.nn.softmax,
                 kernel_initializer = tf.random_normal_initializer(mean=0,stddev=0.3),
                 bias_initializer = tf.constant_initializer(0.1),
-                name="fc2")
+                name="output")
 
         self.all_act_prob = tf.nn.softmax(all_act,name="act_prob")#convert to probability distribution
 
