@@ -8,16 +8,16 @@ import time
 from tqdm import tqdm
 import math
 #inputs = velocity vector (3x1) + rotaion vector(3x1)
-
-def evaluate_score(vel,rot, lastVelM,lastRotM):
-    velM = (vel[0] * vel[0]) + (vel[1] * vel[1]) + (vel[2] * vel[2])
+import sys
+def evaluate_score(vel,rot, lastVelM,lastRotM,step):
+    velM = (vel[0] * vel[0]) + (vel[1] * vel[1]) + (vel[2] * vel[2])#find mag of velocity
     velM = math.sqrt(velM)
-    rotM = (rot[0] * rot[0]) + (rot[1] * rot[1]) + (rot[2] * rot[2])
+    rotM = (rot[0] * rot[0]) + (rot[1] * rot[1]) + (rot[2] * rot[2])#find mag of rotation
     rotM = math.sqrt(rotM)
-    if rot[0] > 180 or rot[2] > 180 or rot[0] < -180 or rot[2] < -180:
+    if rot[0] > 180 or rot[2] > 180 or rot[0] < -180 or rot[2] < -180:#check it hasnt flipped
         return velM,rotM,-1.0
     if velM < lastVelM or rotM < lastRotM:
-        return velM,rotM,1.0
+        return velM,rotM,1.0 * step
     else:
         return velM,rotM,-1.0
 
@@ -75,7 +75,7 @@ class RLnetwork():
         with tf.name_scope("loss"):#define the loss function
             neg_log_prob = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=all_act,labels=self.tf_acts)#Question
             self.loss = tf.reduce_mean(neg_log_prob * self.tf_vt)
-            tf.summary.scalar("loss" + str(VERSION),self.loss)
+            tf.summary.scalar("loss",self.loss)
         with tf.name_scope("train"):
             self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss)
 
@@ -102,7 +102,7 @@ class RLnetwork():
             })
         self.step += 1
         summary  = tf.Summary()
-        summary.value.add(tag="cookies" + str(VERSION),simple_value = sum(self.ep_rs))
+        summary.value.add(tag="cookies",simple_value = sum(self.ep_rs))
         self.writer.add_summary(summary,self.step)
         if self.step % 1 ==0:
             ret = self.sess.run(self.merged, feed_dict = {#using the adam optimizer train feed this tample with these targets
@@ -137,27 +137,28 @@ network = RLnetwork(6,16,0.01,0.95,True)#make network with 6 inputs (x,y,z of ve
 p = subprocess.Popen(os.path.join(os.getcwd(),"builds.exe"))
 time.sleep(5)
 env = control.Drone_Control(25000,0.1)
-NUM_EPISODES = 1000
+NUM_EPISODES = int(sys.argv[1])
 for x in tqdm(range(NUM_EPISODES)):
     observation = env.pollRotation() + env.pollVelocity()
     lastRotM = np.inf
     lastVelM = np.inf
     #this will be a full episode
     env.reset()#clean slate
+    episodeStep = 0
     while not env.crashed:#picks random number and it applies it
         action = network.choose_action(observation)
         env.eval_action(action)
         vel = env.pollVelocity()
         rot = env.pollVelocity()
         next_ob = rot + vel
-        velM,rotM,reward = evaluate_score(vel,rot,lastVelM,lastRotM)
+        velM,rotM,reward = evaluate_score(vel,rot,lastVelM,lastRotM,episodeStep)
         lastRotM = rotM
         lastVelM = velM
         network.store_transition(observation,action,reward)
         observation = next_ob
         if rot[0] > 180 or rot[2] > 180 or rot[0] < -180 or rot[2] < -180:
             env.crashed = True
-
+        episodeStep += 1
      #when the episdoe completes your last action didnt work
     vt = network.learn()#when you crash learn from your mistakes
     env.crashed = False
